@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+# 运行产物（聊天原文与中间 JSON 永不入库）
+work/
+out/
+*.jsonl
+!tests/fixtures/*.jsonl

@@ -1,0 +1,10 @@
+{
+  "name": "chat",
+  "type": "personal_chat",
+  "messages": [
+    {"id": 1, "type": "message", "date": "2024-01-01T20:00:00", "from": "张三", "text": "在吗"},
+    {"id": 2, "type": "message", "date": "2024-01-01T20:01:10", "from": "李四", "text": [{"type": "link", "text": "看这个"}, {"type": "plain", "text": " https://x.test"}]},
+    {"id": 3, "type": "message", "date": "2024-01-01T20:02:00", "from": "张三", "media_type": "photo", "text": ""},
+    {"id": 4, "type": "service", "date": "2024-01-01T20:03:00", "from": "张三", "text": "撤回了一条消息"}
+  ]
+}

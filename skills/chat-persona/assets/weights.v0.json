@@ -1,0 +1,45 @@
+{
+  "version": "0.1.0",
+  "note": "v0 先验权重，未经数据校准。每维权重和为 1.00。权重依据见 docs/DESIGN.md §12.3 与 docs/REVIEW.md。",
+  "dims": {
+    "extraversion": {
+      "label": "社交主动性",
+      "items": {
+        "initiation_ratio": 0.3,
+        "reply_latency_median_s": 0.25,
+        "bursts_per_session": 0.25,
+        "night_ratio": 0.2
+      }
+    },
+    "openness": {
+      "label": "探索开放度",
+      "items": {
+        "char_diversity_500": 0.4,
+        "question_ratio": 0.3,
+        "turn_depth_mean": 0.3
+      }
+    },
+    "agreeableness": {
+      "label": "回应亲和度",
+      "items": {
+        "agree_ratio": 0.4,
+        "disagree_ratio": 0.3,
+        "response_coverage": 0.3
+      }
+    },
+    "conscientiousness": {
+      "label": "条理规划度",
+      "items": {
+        "structure_score": 0.5,
+        "plan_density": 0.5
+      }
+    },
+    "expressiveness": {
+      "label": "情绪外显度",
+      "items": {
+        "emotion_density": 0.5,
+        "intensity_density": 0.5
+      }
+    }
+  }
+}
