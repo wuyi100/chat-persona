@@ -522,51 +522,58 @@ def finalize(msgs, tz, gap_hours, me):
 
 # ---------------------------------------------------------------- 主流程
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description="把聊天记录解析为统一 messages.jsonl（本地、零依赖）",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "示例：\n"
-            "  python parse_chat.py --in chat.txt --out work --me 张三\n"
-            "  python parse_chat.py --in chat.txt --list-senders\n"
-            "  python parse_chat.py --in result.json --out work --format telegram\n"
-        ),
-    )
-    ap.add_argument("--in", dest="inp", help="输入文件路径")
-    ap.add_argument("--out", help="输出目录")
-    ap.add_argument("--format", default="auto",
-                    choices=["auto", "whatsapp", "wechat", "qq", "telegram", "tsv", "colon", "plain"],
-                    help="输入格式（默认 auto）")
-    ap.add_argument("--me", help="指认'我'：发送者名，或发送者序号 1..n")
-    ap.add_argument("--gap-hours", type=float, default=6.0, help="会话切分间隔小时数（默认 6）")
-    ap.add_argument("--tz", default="+08:00", help="无时区信息时使用的偏移，如 +08:00（默认）")
-    ap.add_argument("--encoding", help="强制指定编码")
-    ap.add_argument("--list-senders", action="store_true", help="只列出发送者及条数")
-    ap.add_argument("--alias", action="append", default=[], help="发送者归并，如 --alias '张三=我'")
-    args = ap.parse_args(argv)
+TEXT_EXT = (".txt", ".log", ".md", ".csv", ".tsv", ".json")
 
-    if not args.inp:
-        ap.print_help()
-        return 2
-    if not os.path.isfile(args.inp):
-        die("输入文件不存在：" + args.inp, 2)
-    if not args.list_senders and not args.out:
-        die("需要 --out 输出目录（或用 --list-senders 只看发送者）", 2)
 
-    tz = parse_tz(args.tz)
-    if args.encoding:
-        with open(args.inp, "rb") as f:
-            text = f.read().decode(args.encoding, errors="replace")
-        enc = args.encoding
+def resolve_inputs(raw):
+    """--in 支持：单个文件 / 目录（读其中所有文本文件）/ 用 ; 或 | 分隔的多个路径。"""
+    parts = [raw]
+    for sep in (";", "|"):
+        if sep in raw:
+            parts = [p for p in raw.split(sep) if p.strip()]
+            break
+    out = []
+    for p in parts:
+        p = p.strip().strip('"')
+        if os.path.isdir(p):
+            for name in sorted(os.listdir(p)):
+                fp = os.path.join(p, name)
+                if os.path.isfile(fp) and name.lower().endswith(TEXT_EXT):
+                    out.append(fp)
+        elif os.path.isfile(p):
+            out.append(p)
+    return out
+
+
+def dedupe_msgs(msgs):
+    """分批粘贴常有重叠：按 (时间, 发送者, 正文) 去重，保留首次出现。
+
+    注意：此处在 finalize 之前调用，时间字段可能还叫 raw_ts，两个都要看。
+    """
+    seen = set()
+    out = []
+    for m in msgs:
+        key = (m.get("ts") or m.get("raw_ts"), m.get("sender"), m.get("text"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
+    return out
+
+
+def parse_one(path, fmt_arg, tz, encoding):
+    """解析单个文件，返回 (msgs, unparsed, 家族名, 编码)。"""
+    if encoding:
+        with open(path, "rb") as f:
+            text = f.read().decode(encoding, errors="replace")
+        enc = encoding
     else:
-        text, enc = read_text(args.inp)
+        text, enc = read_text(path)
 
     stripped = text.strip()
     lines = text.splitlines()
-    warnings = []
     unparsed = []
-    fmt = args.format
+    fmt = fmt_arg
     msgs = None
 
     if fmt in ("auto", "telegram") and stripped[:1] in ("{", "["):
@@ -575,9 +582,9 @@ def main(argv=None):
             msgs, fmt = parse_json_dump(obj, tz)
         except ValueError:
             if fmt == "telegram":
-                die("JSON 解析失败，请检查导出文件是否完整", 3)
+                raise SystemExit(3)
             msgs = None
-            fmt = args.format
+            fmt = fmt_arg
 
     if msgs is None and fmt in ("auto", "tsv"):
         got, fmt2 = parse_delimited(lines, tz)
@@ -616,8 +623,68 @@ def main(argv=None):
     if msgs is None and fmt == "plain":
         msgs, unparsed = parse_plain(lines)
 
-    if not msgs:
+    return (msgs or []), unparsed, fmt, enc
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="把聊天记录解析为统一 messages.jsonl（本地、零依赖）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  python parse_chat.py --in chat.txt --out work --me 张三\n"
+            "  python parse_chat.py --in chat.txt --list-senders\n"
+            "  python parse_chat.py --in result.json --out work --format telegram\n"
+            "  python parse_chat.py --in work/raw --out work --me 1   # 目录：合并多段粘贴\n"
+            "  python parse_chat.py --in a.txt;b.txt --out work       # 分号分隔多文件\n"
+        ),
+    )
+    ap.add_argument("--in", dest="inp",
+                    help="输入文件、目录（合并其中所有文本文件），或用 ; 分隔的多个路径")
+    ap.add_argument("--out", help="输出目录")
+    ap.add_argument("--format", default="auto",
+                    choices=["auto", "whatsapp", "wechat", "qq", "telegram", "tsv", "colon", "plain"],
+                    help="输入格式（默认 auto）")
+    ap.add_argument("--me", help="指认'我'：发送者名，或发送者序号 1..n")
+    ap.add_argument("--gap-hours", type=float, default=6.0, help="会话切分间隔小时数（默认 6）")
+    ap.add_argument("--tz", default="+08:00", help="无时区信息时使用的偏移，如 +08:00（默认）")
+    ap.add_argument("--encoding", help="强制指定编码")
+    ap.add_argument("--list-senders", action="store_true", help="只列出发送者及条数")
+    ap.add_argument("--alias", action="append", default=[], help="发送者归并，如 --alias '张三=我'")
+    args = ap.parse_args(argv)
+
+    if not args.inp:
+        ap.print_help()
+        return 2
+    inputs = resolve_inputs(args.inp)
+    if not inputs:
+        die("输入路径不存在，或目录中没有可读取的文本文件：" + args.inp, 2)
+    if not args.list_senders and not args.out:
+        die("需要 --out 输出目录（或用 --list-senders 只看发送者）", 2)
+
+    tz = parse_tz(args.tz)
+    warnings = []
+    all_msgs, all_unparsed, fmts, encs = [], [], [], []
+    for p in inputs:
+        msgs_i, unparsed_i, fmt_i, enc_i = parse_one(p, args.format, tz, args.encoding)
+        if not msgs_i:
+            warnings.append("未能解析出消息，已跳过：" + os.path.basename(p))
+            continue
+        all_msgs.extend(msgs_i)
+        all_unparsed.extend(unparsed_i)
+        fmts.append(fmt_i)
+        encs.append(enc_i)
+
+    if not all_msgs:
         die("未能解析出任何消息。请检查文件是否为空，或改用 --format 指定格式", 3)
+
+    msgs = dedupe_msgs(all_msgs)
+    dup = len(all_msgs) - len(msgs)
+    if dup:
+        warnings.append("合并时按（时间, 发送者, 正文）去掉 %d 条重复消息" % dup)
+    fmt = fmts[0] if len(set(fmts)) == 1 else "mixed"
+    enc = encs[0] if len(set(encs)) == 1 else "mixed"
+    unparsed = all_unparsed
 
     # 发送者别名
     if args.alias:
@@ -674,6 +741,7 @@ def main(argv=None):
     report = {
         "format": fmt,
         "input": os.path.abspath(args.inp),
+        "input_files": [os.path.abspath(p) for p in inputs],
         "encoding": enc,
         "messages": len(out),
         "text_messages": n_text,

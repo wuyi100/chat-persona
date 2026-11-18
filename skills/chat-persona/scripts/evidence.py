@@ -134,7 +134,7 @@ def build_stat(key, item):
     if key == "night_ratio":
         return "23:00–06:00 的消息占 %d%%" % int(round(v * 100))
     if key == "char_diversity_500":
-        return "500 字抽样中不同字约 %d%%" % int(round(v * 100))
+        return "抽样中不同字约 %d%%（越高中文用字越分散）" % int(round(v * 100))
     if key == "question_ratio":
         return "提问类消息占 %d%%" % int(round(v * 100))
     if key == "turn_depth_mean":

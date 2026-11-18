@@ -105,7 +105,10 @@ def dims_table(dims):
             rows.append("| %s | 未评估 | — | %s | — |" % (label, pct(d.get("coverage"))))
             continue
         rng = d.get("range")
-        rng_s = "%d–%d" % (rng[0], rng[1]) if rng else "—"
+        if rng and (rng[1] - rng[0]) >= 1:
+            rng_s = "%d–%d" % (rng[0], rng[1])
+        else:
+            rng_s = "—（会话间无差异）" if rng else "—"
         rows.append("| %s | %s | %s | %s | %s |" % (
             label, d.get("band") or "—", rng_s, pct(d.get("coverage")),
             STABILITY.get(d.get("stability"), "—")))

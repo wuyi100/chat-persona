@@ -83,7 +83,9 @@ def test_core_values():
         near("emotion_density", 0.0)
         near("intensity_density", 0.0)
 
-        assert any(m["key"] == "char_diversity_500" for m in data["missing"]), data["missing"]
+        # 短会话（≥10 字）也应算出多样性，不再进 missing
+        assert "char_diversity_500" in f, data["missing"]
+        assert 0.0 < f["char_diversity_500"]["value"] <= 1.0
         assert abs(data["l1"]["median_reply_s"] - 60.0) < TOL
         assert abs(data["l1"]["median_burst_chars"] - 3.0) < TOL
         assert abs(data["l1"]["my_share"] - 5.0 / 8) < TOL

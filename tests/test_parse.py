@@ -148,3 +148,30 @@ def test_missing_file():
     code, so, se = run("--in", os.path.join(FIX, "nope.txt"), "--out",
                        tempfile.mkdtemp(prefix="cp_parse_"))
     assert code == 2, code
+
+def test_merge_dir_dedupes():
+    """--in 传目录时合并多个文件，并按（时间, 发送者, 正文）去重。"""
+    a = tempfile.mkdtemp(prefix="cp_merge_a_")
+    b = tempfile.mkdtemp(prefix="cp_merge_b_")
+    d = tempfile.mkdtemp(prefix="cp_merge_")
+    try:
+        with open(os.path.join(a, "01.txt"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("2024-01-01 12:00:00 张三\n你好\n2024-01-01 12:01:00 李四\n在的\n")
+        with open(os.path.join(b, "02.txt"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("2024-01-01 12:01:00 李四\n在的\n2024-01-01 12:05:00 张三\n晚点找你\n")
+        for src in (a, b):
+            for name in os.listdir(src):
+                shutil.copy(os.path.join(src, name), os.path.join(d, name))
+        out = tempfile.mkdtemp(prefix="cp_merge_out_")
+        code, so, se = run("--in", d, "--out", out, "--me", "张三")
+        assert code == 0, "exit %d\n%s\n%s" % (code, so, se)
+        with open(os.path.join(out, "parse_report.json"), encoding="utf-8") as f:
+            rep = json.load(f)
+        assert rep["messages"] == 3, rep["messages"]
+        assert rep["format"] == "date_time_sender", rep["format"]
+        assert len(rep["input_files"]) == 2, rep["input_files"]
+        assert any("重复" in w for w in rep["warnings"]), rep["warnings"]
+        cleanup(out)
+    finally:
+        for x in (a, b, d):
+            cleanup(x)

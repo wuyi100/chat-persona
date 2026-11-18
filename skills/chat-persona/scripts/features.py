@@ -28,7 +28,7 @@ BURST_GAP_S = 120
 REPLY_CAP_S = 12 * 3600
 COVER_WINDOW_S = 3600
 DIVERSITY_SAMPLE = 500
-DIVERSITY_MIN = 50
+DIVERSITY_MIN = 10
 
 AGREE = [
     "好的", "好呀", "好啊", "行吧", "可以", "嗯嗯", "对对", "确实", "同意",
@@ -84,11 +84,13 @@ def to_dt(s):
 
 
 def grade_of(n, days, partners):
-    if n >= 2000 and days >= 30 and partners >= 3:
+    # v1 只支持一对一，partners 恒为 1，因此不再作为 A 级条件；
+    # 门槛按"1:1 聊天实际能拿到的量"重定：多数用户能凑到 300 条 / 10 天。
+    if n >= 1500 and days >= 30:
         return "A"
-    if n >= 500 and days >= 14:
+    if n >= 300 and days >= 10:
         return "B"
-    if n >= 200 and days >= 7:
+    if n >= 120 and days >= 5:
         return "C"
     return "D"
 
@@ -165,7 +167,7 @@ def session_stats(sid, rows):
             night += 1
     st["night"] = (night, night_den)
 
-    # 字符多样性
+    # 字符多样性：按会话切样本，短会话也允许（下限 10 字），否则 1:1 短消息场景全部缺失
     text = "".join(r.get("text") or "" for r in mine if r.get("type") == "text")
     chars = re.sub(r"[^\w]", "", text)
     st["div"] = None
@@ -352,7 +354,7 @@ def main(argv=None):
     put("char_diversity_500",
         [{"sid": s["sid"], "c": {"sum": (float(s["div"][0]) / s["div"][1]) * s["div"][1], "n": s["div"][1]}}
          for s in stats if s["div"]],
-        "mean", "ratio", "我的文本不足 50 字")
+        "mean", "ratio", "我的文本不足 10 字")
 
     txt = [text_stats(s["mine"]) for s in stats]
 

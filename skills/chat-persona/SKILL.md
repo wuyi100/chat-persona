@@ -31,100 +31,76 @@ compatibility: Python 3.9+，仅标准库；输入须为用户本人拥有或已
 
 ### 1. 收集
 
-让用户把聊天记录**复制粘贴**进 `<work>/input.txt`，或给出已经导出的文件路径（.txt/.json/.tsv/.csv）。
+先问用户手上是哪一种，按对应路径走：
 
-微信/QQ 没有可直接解析的导出格式，正确做法是：选中消息 → 复制 → 粘贴进文本文件；或用微信"聊天记录迁移"之外的工具导出为 txt。**不要**尝试读取微信/QQ 的加密数据库。
+- **已有导出文件**（WhatsApp `.txt`、Telegram `.json`、CSV/TSV）：直接拿路径，跳到第 2 步。
+- **微信/QQ 桌面端，靠复制**：这是最常见的路径。先开一个监听窗口：
 
-继续条件：`<work>/input.txt` 存在且非空。停止条件：用户只有截图 → 说明截图丢失时间戳，行为特征无法计算，请改用文本。
+  ```bash
+  python scripts/grab.py --out <work>/raw.txt --watch
+  ```
 
-### 2. 解析
+  然后让用户在聊天窗口里多选消息、Ctrl+C——每复制一段，脚本自动追加并去重；够了按 Ctrl+C 结束。
+  不用每复制一次就跑一次命令，也不用手工粘进文件。
 
-```bash
-python scripts/parse_chat.py --in <work>/input.txt --out <work> --list-senders
-```
+  如果用户不想开长驻窗口，也可以每复制一段跑一次 `python scripts/grab.py --out <work>/raw.txt`；`--peek` 抽查末尾，`--reset` 清空重来。
 
-读 `<work>/parse_report.json`：
+  注意：QQ 桌面版多选复制通常只带正文、不带发送者和时间戳；微信 4.x 视版本而定。若第 3 步发现 `has_timestamps=false`，明确告诉用户："这份记录没有时间戳，只能出语言与互动事实，行为维度会缺失。"并给出获得时间戳的办法：用 WhatsApp/Telegram 的导出文件，或在复制内容前手动补一行 `2024-01-01 12:00:00 昵称`。
 
-- `format` 是否识别正确；`unparsed_lines` 是否 ≤ 消息数的 5%。
-- `unparsed_lines` 偏高 → 用 `--format wechat|qq|whatsapp|telegram|tsv|colon` 指定重跑；仍失败就请用户换一种复制方式（见 `references/privacy.md` 末尾的格式说明）。
-- `has_timestamps` 为 false → 只能出文本特征，行为维度会缺失，先告知用户。
+**不要**尝试读取微信/QQ 的加密数据库（.bak/.db 是加密的，解不开）。
 
-继续条件：至少解析出 200 条且有发送者。停止条件：解析为 0 条，或群聊（发送者 >2）。
+继续条件：`<work>/raw.txt`（或用户给的导出文件）存在且非空。停止条件：用户只有截图 → 说明截图丢失时间戳，请改用文本。
 
-### 3. 指认"我是谁"
+### 2. 一条命令出报告
 
-把 `senders` 列表给用户看，问哪一个是本人，然后重跑：
-
-```bash
-python scripts/parse_chat.py --in <work>/input.txt --out <work> --me "<用户的名字>"
-```
-
-`--me` 也接受序号。继续条件：`parse_report.json` 的 `me` 非空且 `senders` 恰好 2 个。停止条件：用户不愿指认 → 停止，画像必须知道"我"是谁。
-
-### 4. 匿名化
+先列发送者，确认"我"是谁：
 
 ```bash
-python scripts/anonymize.py --in <work> --out <work>
+python scripts/profile.py --in <work>
 ```
 
-读 `<work>/anonymize_report.json`：
-
-- `masked` 各类计数是否合理；`sender_map` 是否已把我/对方分开。
-- `safety_notice` 非空 → 原文转述给用户，问是否继续；涉及危机内容 → 停止。
-- `dropped` > 0 只会在显式加了 `--drop-sensitive` 时出现；默认保留并打标、不引用。用户想彻底删除时再加该参数重跑。
-
-继续条件：`messages.anon.jsonl` 存在。停止条件：用户要求保留原始姓名电话 → 说明报告会引用 snippet，必须先脱敏。
-
-### 5. 特征与分级
+看到 `senders` 后重跑：
 
 ```bash
-python scripts/features.py --in <work> --out <work>
+python scripts/profile.py --in <work> --me "<用户的名字或序号>"
 ```
 
-读 `<work>/features.json` 的 `meta.grade`：
+`profile.py` 会依次跑解析 → 脱敏 → 特征 → 计分 → 证据 → 报告，任何一步失败就停在原地并打印原因。`--in` 给目录时会自动合并 `raw.txt` 与其他文本文件、按（时间, 发送者, 正文）去重。
 
-- `A/B`：继续出分。
-- `C`：只出事实速览与定性描述，不出分（第 6 步会输出 note）。
-- `D`：停止，告诉用户需要 ≥200 条、≥7 天，或再提供一段时间的记录。
+成功时得到 `<work>/report.md` 和 5 个中间 JSON。
 
-同时看 `meta.partners`：>1 说明不是一对一，回到第 3 步。
+### 3. 检查点
 
-### 6. 计分
+报告生成后，必须核对这四项，再交付：
 
-```bash
-python scripts/score.py --in <work> --out <work>
-```
+1. `<work>/parse_report.json`：`has_timestamps` 是否为 true；`unparsed_lines` 是否 ≤ 消息数的 5%（偏高就用 `--format wechat|qq|whatsapp|telegram|tsv|colon|plain` 重跑）；发送者是否恰好 2 个。
+2. `<work>/features.json` 的 `meta.grade`：
+   - `A/B`：正常出分（A ≥1500 条/30 天，B ≥300 条/10 天）。
+   - `C`：只出事实，`score.json` 的 `dims` 为空，报告写"样本量不足，本次不形成结论"，照实交付。
+   - `D`：`profile.py` 会停在计分并退出 3 → 告诉用户需要 ≥120 条、≥5 天，或再补一段记录。
+3. `<work>/score.json`：某维 `score` 为 null → 报告已写"未评估"，不要补猜；`stability=low` → 降一档表述并注明"不稳定"。
+4. `<work>/evidence.json`：`insufficient[]` 里的维度不写结论；`contrast` 为 null 时第 5 段会自动写说明，不要自己编。
 
-读 `<work>/score.json`：
+停止条件：解析为 0 条、群聊（发送者 >2）、或用户不愿指认"我"。
 
-- 每维 `score` 可能为 null（覆盖不足 <0.6）→ 报告写"数据不足，未评估"，不要猜。
-- `stability=low` → 该维降一档表述，并注明"不稳定"。
-- `band` 已处理跨档波动，不要自己改写档位。
-- C 级：`dims` 为空，继续跑第 7、8 步；`render_report.py` 会写"样本量不足，本次不形成结论"。
+### 4. 单步排查（可选）
 
-### 7. 证据
+哪一步的结果可疑，就单独重跑那一步，参数与 `profile.py` 相同：
 
-```bash
-python scripts/evidence.py --in <work> --out <work>
-```
+| 步骤 | 命令 |
+|---|---|
+| 解析 | `python scripts/parse_chat.py --in <work> --out <work> --me "<名字>"` |
+| 脱敏 | `python scripts/anonymize.py --in <work> --out <work>` |
+| 特征 | `python scripts/features.py --in <work> --out <work>` |
+| 计分 | `python scripts/score.py --in <work> --out <work>` |
+| 证据 | `python scripts/evidence.py --in <work> --out <work>` |
+| 报告 | `python scripts/render_report.py --in <work> --out <work>` |
 
-读 `<work>/evidence.json`：`evidence[]` 每条带 `id`、`stat`、`claim`、可选 `snippet`；`insufficient[]` 的维度不写结论；`contrast` 为 null 时第 5 段会自动写"没有找到证据足够的反差"，不要自己编一对。
-
-### 8. 生成报告
-
-```bash
-python scripts/render_report.py --in <work> --out <work>
-```
-
-得到 `<work>/report.md`。它已保证：6 段齐全、每条结论带 E#、snippet ≤3、无禁止词、无总分/排名、含删除指引。
-
-你可以润色措辞，但**不得**改数字、档位、E#，不得新增没有证据的结论。禁止词与写法见 `references/report-template.md`。
-
-### 9. 交付与自检
+### 5. 交付与自检
 
 把 `report.md` 全文展示给用户，并告知：工作目录 `<work>` 可直接删除，技能不保留副本。
 
-交付前逐条核对 `references/report-template.md` 的 9 条 rubric；任一不过就修。
+你可以润色措辞，但**不得**改数字、档位、E#，不得新增没有证据的结论。交付前逐条核对 `references/report-template.md` 的 9 条 rubric；任一不过就修。
 
 ## 不要做
 

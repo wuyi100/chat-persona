@@ -41,17 +41,25 @@ $py = "python"          # 或你的 python.exe 路径
 $work = "$env:TEMP\cp-demo"
 New-Item -ItemType Directory -Force $work | Out-Null
 
-# 1) 解析（--list-senders 先看有哪些发送者，再用 --me 指认自己）
-& $py scripts\parse_chat.py --in .\chat.txt --out $work --list-senders
-& $py scripts\parse_chat.py --in .\chat.txt --out $work --me "我的昵称"
+# 1) 开监听窗口：在微信/QQ 里多选消息复制，复制一段自动追加一段；Ctrl+C 结束
+& $py scripts\grab.py --out "$work\raw.txt" --watch
+& $py scripts\grab.py --out "$work\raw.txt" --peek   # 可选：抽查已收集内容的末尾
 
-# 2) 匿名化（发送者变“我/对方A”，手机号/链接/姓名等打码）
+# 2) 先列发送者，再一条命令出报告
+& $py scripts\profile.py --in $work
+& $py scripts\profile.py --in $work --me "我的昵称"
+```
+
+报告在 `$work\report.md`。已有导出文件（WhatsApp/Telegram/CSV）时跳过第 1 步，把导入文件放进 `$work` 即可。
+
+要单步调试，六个脚本也可以分别运行：
+
+```powershell
+& $py scripts\parse_chat.py --in $work --out $work --me "我的昵称"
 & $py scripts\anonymize.py --in $work --out $work
-
-# 3) 特征 → 计分 → 证据 → 报告
-& $py scripts\features.py --in $work --out $work
-& $py scripts\score.py --in $work --out $work
-& $py scripts\evidence.py --in $work --out $work
+& $py scripts\features.py  --in $work --out $work
+& $py scripts\score.py     --in $work --out $work
+& $py scripts\evidence.py  --in $work --out $work
 & $py scripts\render_report.py --in $work --out $work
 ```
 
@@ -64,13 +72,14 @@ New-Item -ItemType Directory -Force $work | Out-Null
 
 | 来源 | 形态 | 说明 |
 |---|---|---|
-| 微信 | 多选消息复制出的「时间+昵称 / 内容」两行式，或「昵称：内容」 | 电脑版复制即可；加密数据库不解析 |
-| QQ | 消息管理器导出的 txt（「时间 昵称(QQ号) / 内容」） | 尾号会自动去掉 |
+| 微信 | 多选消息复制出的「时间+昵称 / 内容」两行式，或「昵称：内容」 | 复制内容有无时间戳随版本不同；没有时只能出语言类特征 |
+| QQ | 多选复制（通常只有正文），或消息管理器导出的 txt（「时间 昵称(QQ号) / 内容」） | 尾号会自动去掉；加密 .bak 不解析 |
 | WhatsApp | `[日期, 时间] 昵称: 内容` | 直接导出 txt |
 | Telegram | Desktop 导出 JSON | 读 `messages[]` |
 | 表格 | CSV/TSV，含时间/发送者/内容三列 | 列名支持中英文 |
 | 纯文本 | 只有「昵称：内容」 | 无时间戳，只能出语言类特征 |
 
+批量收集用 `scripts/grab.py`：复制一段、追加一段，自动去重；`--in` 给目录时 parse 会合并目录内的 `raw.txt` 等文件。
 没有时间戳时，行为类特征（回复时延、发起率、深夜占比）会缺失，报告会说明。
 
 ## 输出文件
