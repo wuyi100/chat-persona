@@ -32,6 +32,8 @@ FORMAT_LABEL = {
     "date_time_sender": "时间+昵称两行式", "sender_date_time": "昵称+时间两行式",
     "whatsapp_bracket": "WhatsApp 方括号式", "whatsapp_dash": "WhatsApp 行内式",
     "cn3": "中文日期三行式", "json": "JSON 导出",
+    "sender_cn_date": "微信 4.x 多选复制（昵称+中文日期）",
+    "cn_date_3line": "中文日期三行式", "mixed": "多文件混合格式",
 }
 
 

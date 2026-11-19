@@ -358,6 +358,28 @@ def detect_family(lines):
     if n_cn > best_n:
         best, best_n = ("cn3", CN3_HEADER_RE, "cn_date_3line"), n_cn
 
+    # 用空行分块判别两种中文三行式：
+    #   cn3        [日期, 昵称, 正文]
+    #   sender_cn  [昵称, 日期, 正文]（微信 4.x 多选复制）
+    blocks, cur = [], []
+    for ln in lines[:3000]:
+        if ln.strip():
+            cur.append(ln)
+        elif cur:
+            blocks.append(cur)
+            cur = []
+    if cur:
+        blocks.append(cur)
+    n_sc = sum(
+        1 for b in blocks
+        if len(b) >= 2 and not CN3_HEADER_RE.match(norm_header(b[0]))
+        and len(b[0].strip()) <= 40
+        and CN3_HEADER_RE.match(norm_header(b[1]))
+    )
+    n_cn3b = sum(1 for b in blocks if b and CN3_HEADER_RE.match(norm_header(b[0])))
+    if n_sc > n_cn3b and n_sc >= 2:
+        best, best_n = ("sender_cn", CN3_HEADER_RE, "sender_cn_date"), n_sc
+
     if best is None or best_n < 2 or best_n / float(total) < 0.04:
         return None, 0
     return best, best_n
@@ -407,6 +429,40 @@ def parse_header(lines, fam, tz):
                 unparsed.append(ln)
             continue
         cur["text"] = (cur["text"] + "\n" + ln).strip() if cur["text"] else ln.strip()
+    if cur:
+        msgs.append(cur)
+    return msgs, unparsed
+
+
+def parse_sender_cn(lines, tz):
+    """微信 4.x 多选复制格式：昵称 / 2026年11月19日 16:27 / 正文（空行分隔）。
+
+    最后一条消息的正文之后可能没有空行，因此只把“紧跟日期行的短行”当昵称。
+    """
+    msgs, unparsed = [], []
+    cur = None
+    pending_sender = None
+    for idx, ln in enumerate(lines):
+        s = norm_header(ln).strip()
+        m = CN3_HEADER_RE.match(s)
+        if m:
+            if cur:
+                msgs.append(cur)
+            sender = pending_sender or ""
+            pending_sender = None
+            dt = make_dt(m.group("date"), m.group("time"), m.group("ampm"), tz)
+            cur = new_msg(sender, dt, "%s %s" % (m.group("date"), m.group("time")), "")
+            continue
+        if not s:
+            continue
+        nxt = lines[idx + 1] if idx + 1 < len(lines) else ""
+        if len(s) <= 40 and CN3_HEADER_RE.match(norm_header(nxt)):
+            pending_sender = clean_sender(s)
+            continue
+        if cur is None:
+            unparsed.append(ln)
+            continue
+        cur["text"] = (cur["text"] + "\n" + s) if cur["text"] else s
     if cur:
         msgs.append(cur)
     return msgs, unparsed
@@ -611,6 +667,8 @@ def parse_one(path, fmt_arg, tz, encoding):
             msgs, unparsed = parse_inline(lines, regex, tz)
         elif kind == "cn3":
             msgs, unparsed = parse_cn3(lines, tz)
+        elif kind == "sender_cn":
+            msgs, unparsed = parse_sender_cn(lines, tz)
         else:
             msgs, unparsed = parse_header(lines, regex, tz)
             if not msgs:

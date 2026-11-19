@@ -117,6 +117,23 @@ def test_colon_no_timestamp():
         cleanup(d)
 
 
+def test_wechat4_sender_first():
+    """微信 4.x 多选复制：昵称 / 2026年11月19日 16:27 / 正文。"""
+    d, rep, msgs = parse("wechat4.txt", "--me", "我")
+    try:
+        assert rep["format"] == "sender_cn_date", rep["format"]
+        assert rep["messages"] == 4, rep["messages"]
+        assert rep["sessions"] == 1, rep["sessions"]
+        assert rep["me"] == "我"
+        assert [m["sender"] for m in msgs] == ["阿醒", "我", "我", "阿醒"], [m["sender"] for m in msgs]
+        assert msgs[0]["text"] == "能不能分我一半", msgs[0]["text"]
+        assert msgs[0]["ts"].startswith("2026-11-19T16:27:00"), msgs[0]["ts"]
+        assert msgs[3]["ts"].startswith("2026-11-19T16:30:00"), msgs[3]["ts"]
+        assert [m["is_me"] for m in msgs] == [False, True, True, False]
+    finally:
+        cleanup(d)
+
+
 def test_cn3():
     d, rep, msgs = parse("wechat_cn3.txt")
     try:
