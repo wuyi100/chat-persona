@@ -94,6 +94,14 @@ CN3_HEADER_RE = re.compile(
 
 COLON_RE = re.compile(r"^([^:：\n]{1,40})[:：]\s*(.*)$")
 
+# QQ「消息记录」另存为 .doc 后的样子：整篇常被压成一行，
+# 形如「无衣: 11-17 00:24:29 内容 无衣: 11-17 00:24:33 内容」。
+QQ_DOC_RE = re.compile(
+    r"(?:^|(?<=\s))(?P<sender>[^\s:：]{1,40})[:：]\s*"
+    r"(?P<month>\d{1,2})[-/](?P<day>\d{1,2})\s+"
+    r"(?P<time>\d{1,2}:\d{2}(?::\d{2})?)\s+"
+)
+
 COL_NAMES = {
     "time": {"time", "date", "datetime", "timestamp", "时间", "日期", "发送时间", "消息时间"},
     "sender": {"sender", "from", "name", "author", "发送者", "发送人", "昵称", "名字", "用户", "发言人"},
@@ -358,27 +366,23 @@ def detect_family(lines):
     if n_cn > best_n:
         best, best_n = ("cn3", CN3_HEADER_RE, "cn_date_3line"), n_cn
 
-    # 用空行分块判别两种中文三行式：
+    # 判别两种中文三行式：
     #   cn3        [日期, 昵称, 正文]
-    #   sender_cn  [昵称, 日期, 正文]（微信 4.x 多选复制）
-    blocks, cur = [], []
-    for ln in lines[:3000]:
-        if ln.strip():
-            cur.append(ln)
-        elif cur:
-            blocks.append(cur)
-            cur = []
-    if cur:
-        blocks.append(cur)
-    n_sc = sum(
-        1 for b in blocks
-        if len(b) >= 2 and not CN3_HEADER_RE.match(norm_header(b[0]))
-        and len(b[0].strip()) <= 40
-        and CN3_HEADER_RE.match(norm_header(b[1]))
+    #   sender_cn  [昵称, 日期, 正文]（微信 4.x 多选复制；.docx 段落间没有空行）
+    ne = [ln for ln in lines[:3000] if ln.strip()]
+    pairs = sum(
+        1 for i in range(len(ne) - 1)
+        if len(ne[i].strip()) <= 40
+        and not CN3_HEADER_RE.match(norm_header(ne[i]))
+        and CN3_HEADER_RE.match(norm_header(ne[i + 1]))
     )
-    n_cn3b = sum(1 for b in blocks if b and CN3_HEADER_RE.match(norm_header(b[0])))
-    if n_sc > n_cn3b and n_sc >= 2:
-        best, best_n = ("sender_cn", CN3_HEADER_RE, "sender_cn_date"), n_sc
+    starts_with_sender = (
+        len(ne) >= 2
+        and not CN3_HEADER_RE.match(norm_header(ne[0]))
+        and CN3_HEADER_RE.match(norm_header(ne[1]))
+    )
+    if starts_with_sender and pairs >= 2:
+        best, best_n = ("sender_cn", CN3_HEADER_RE, "sender_cn_date"), pairs
 
     if best is None or best_n < 2 or best_n / float(total) < 0.04:
         return None, 0
@@ -521,6 +525,42 @@ def parse_plain(lines):
 
 # ---------------------------------------------------------------- 后处理
 
+def parse_qq_doc(text, tz, year=None):
+    """QQ 消息记录另存 .doc 后抽出的一行文本：昵称: 11-17 00:24:29 内容。"""
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", text)
+    matches = list(QQ_DOC_RE.finditer(text))
+    if not matches:
+        return [], []
+    if year is None:
+        year = datetime.now(tz).year
+    msgs = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[m.end():end]
+        body = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", body).strip()
+        date_s = "%d-%d-%d" % (year, int(m.group("month")), int(m.group("day")))
+        dt = make_dt(date_s, m.group("time"), None, tz)
+        if dt is not None and dt > datetime.now(tz) + timedelta(days=2):
+            date_s = "%d-%d-%d" % (year - 1, int(m.group("month")), int(m.group("day")))
+            dt = make_dt(date_s, m.group("time"), None, tz)
+        msgs.append(new_msg(m.group("sender"), dt, "%s %s" % (date_s, m.group("time")), body))
+
+    # 少数导出会在“正文紧贴下一个昵称”处丢掉分隔符，把正文尾巴当成昵称；
+    # 这类昵称不会重复出现，按上一个已知昵称纠正。
+    counts = {}
+    for msg in msgs:
+        counts[msg["sender"]] = counts.get(msg["sender"], 0) + 1
+    known = {name for name, n in counts.items() if n >= 2 and len(name) <= 12}
+    prev = ""
+    for msg in msgs:
+        name = msg["sender"]
+        if name not in known and len(name) > 12 and prev:
+            msg["sender"] = prev
+        else:
+            prev = msg["sender"]
+    return msgs, []
+
+
 def finalize(msgs, tz, gap_hours, me):
     msgs = [m for m in msgs if classify(m["text"]) != "empty"]
 
@@ -578,7 +618,7 @@ def finalize(msgs, tz, gap_hours, me):
 
 # ---------------------------------------------------------------- 主流程
 
-TEXT_EXT = (".txt", ".log", ".md", ".csv", ".tsv", ".json")
+TEXT_EXT = (".txt", ".log", ".md", ".csv", ".tsv", ".json", ".doc", ".docx")
 
 
 def resolve_inputs(raw):
@@ -617,9 +657,17 @@ def dedupe_msgs(msgs):
     return out
 
 
-def parse_one(path, fmt_arg, tz, encoding):
+def parse_one(path, fmt_arg, tz, encoding, year=None):
     """解析单个文件，返回 (msgs, unparsed, 家族名, 编码)。"""
-    if encoding:
+    if isinstance(tz, str):
+        tz = parse_tz(tz)
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix in (".doc", ".docx"):
+        # Word 导出：先转纯文本（.docx 零依赖；.doc 需要 Windows + Word）
+        import doc2txt
+        text = doc2txt.convert(path).replace("\r\n", "\n").replace("\r", "\n")
+        enc = "doc2txt"
+    elif encoding:
         with open(path, "rb") as f:
             text = f.read().decode(encoding, errors="replace")
         enc = encoding
@@ -641,6 +689,12 @@ def parse_one(path, fmt_arg, tz, encoding):
                 raise SystemExit(3)
             msgs = None
             fmt = fmt_arg
+
+    if msgs is None and fmt in ("auto", "qq"):
+        if len(QQ_DOC_RE.findall(text)) >= 3:
+            got, unp = parse_qq_doc(text, tz, year)
+            if got:
+                msgs, unparsed, fmt = got, unp, "qq_doc"
 
     if msgs is None and fmt in ("auto", "tsv"):
         got, fmt2 = parse_delimited(lines, tz)
@@ -705,6 +759,7 @@ def main(argv=None):
                     help="输入格式（默认 auto）")
     ap.add_argument("--me", help="指认'我'：发送者名，或发送者序号 1..n")
     ap.add_argument("--gap-hours", type=float, default=6.0, help="会话切分间隔小时数（默认 6）")
+    ap.add_argument("--year", type=int, help="QQ .doc 导出里只有月日，用这个年份（默认按当前年份推断）")
     ap.add_argument("--tz", default="+08:00", help="无时区信息时使用的偏移，如 +08:00（默认）")
     ap.add_argument("--encoding", help="强制指定编码")
     ap.add_argument("--list-senders", action="store_true", help="只列出发送者及条数")
@@ -724,7 +779,7 @@ def main(argv=None):
     warnings = []
     all_msgs, all_unparsed, fmts, encs = [], [], [], []
     for p in inputs:
-        msgs_i, unparsed_i, fmt_i, enc_i = parse_one(p, args.format, tz, args.encoding)
+        msgs_i, unparsed_i, fmt_i, enc_i = parse_one(p, args.format, tz, args.encoding, args.year)
         if not msgs_i:
             warnings.append("未能解析出消息，已跳过：" + os.path.basename(p))
             continue

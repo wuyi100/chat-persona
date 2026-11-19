@@ -62,9 +62,17 @@ def main(argv=None):
     ap.add_argument("--drop-sensitive", action="store_true", help="直接丢弃敏感消息而不是打标")
     ap.add_argument("--bootstrap", type=int, default=1000, help="bootstrap 次数（默认 1000）")
     ap.add_argument("--assets", help="权重/锚点目录，默认技能自带 assets")
+    ap.add_argument("--force", action="store_true",
+                    help="样本不足时也出分（报告标注“仅供演示”，不得当结论）")
     args = ap.parse_args(argv)
 
-    work = args.out or args.inp
+    if args.out:
+        work = args.out
+    elif os.path.isdir(args.inp):
+        work = args.inp
+    else:
+        stem = os.path.splitext(os.path.basename(args.inp))[0]
+        work = os.path.join(os.path.dirname(os.path.abspath(args.inp)), stem + "_out")
     os.makedirs(work, exist_ok=True)
 
     base = ["--in", args.inp, "--out", work]
@@ -89,7 +97,8 @@ def main(argv=None):
         "anonymize.py": anon_args,
         "features.py": ["--in", work, "--out", work],
         "score.py": ["--in", work, "--out", work, "--bootstrap", str(args.bootstrap)]
-                    + (["--assets", args.assets] if args.assets else []),
+                    + (["--assets", args.assets] if args.assets else [])
+                    + (["--force"] if args.force else []),
         "evidence.py": ["--in", work, "--out", work],
         "render_report.py": ["--in", work, "--out", work],
     }

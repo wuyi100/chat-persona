@@ -138,7 +138,7 @@ def compute(items_scores, spec):
     return score, cov
 
 
-def run(in_dir, out_dir, assets_dir, B, seed):
+def run(in_dir, out_dir, assets_dir, B, seed, force=False):
     feats = load_json(os.path.join(in_dir, "features.json"))
     weights = load_json(os.path.join(assets_dir, "weights.v0.json"))
     anchors_doc = load_json(os.path.join(assets_dir, "anchors.v0.json"))
@@ -147,14 +147,15 @@ def run(in_dir, out_dir, assets_dir, B, seed):
     meta = feats.get("meta") or {}
     grade = meta.get("grade") or "D"
     warnings = []
-    if grade == "D":
-        die("样本不足以出分（grade D：%s 条 / %s 天）。只可做定性描述或建议用户提供更多记录。"
+    if grade == "D" and not force:
+        die("样本不足以出分（grade D：%s 条 / %s 天）。只可做定性描述或建议用户提供更多记录；"
+            "若只想验证流程，加 --force（报告会标注“样本不足，仅供演示”）。"
             % (meta.get("messages"), meta.get("span_days")), 3)
 
     fmap = feats.get("features") or {}
     sids = sorted({sid for item in fmap.values() for sid in (item.get("series") or {})})
 
-    if grade == "C":
+    if grade == "C" and not force:
         out = {
             "version": "0.1.0",
             "grade": "C",
@@ -212,9 +213,10 @@ def run(in_dir, out_dir, assets_dir, B, seed):
         elif B > 0:
             warnings.append("%s：会话数 <8，未做 bootstrap" % spec["label"])
 
-        # 敏感性：删 30% 会话
-        sens = 0.0
+        # 敏感性：删 30% 会话（会话太少时无法估计，标 unknown 而不是假装稳定）
+        sens = None
         if len(sids) >= 4:
+            sens = 0.0
             for s in range(1, 6):
                 rr = random.Random(s)
                 k = max(1, int(round(len(sids) * 0.3)))
@@ -228,7 +230,10 @@ def run(in_dir, out_dir, assets_dir, B, seed):
                 s2, _ = compute(rebuilt, spec)
                 if score is not None and s2 is not None:
                     sens = max(sens, abs(score - s2))
-        stability = "high" if sens <= 8 else ("medium" if sens <= 15 else "low")
+        if sens is None:
+            stability = "unknown"
+        else:
+            stability = "high" if sens <= 8 else ("medium" if sens <= 15 else "low")
 
         item_out = {}
         for item_key in spec["items"]:
@@ -248,7 +253,7 @@ def run(in_dir, out_dir, assets_dir, B, seed):
             "range": [range_low, range_high] if range_low is not None else None,
             "coverage": round(cov, 2),
             "stability": stability,
-            "sensitivity": round(sens, 1),
+            "sensitivity": round(sens, 1) if sens is not None else None,
             "items": item_out,
         }
         if score is None:
@@ -259,11 +264,16 @@ def run(in_dir, out_dir, assets_dir, B, seed):
     out = {
         "version": "0.1.0",
         "grade": grade,
-        "confidence": "高" if grade == "A" else "中",
+        "confidence": "高" if grade == "A" else ("中" if grade == "B" else "低"),
+        "forced": bool(force and grade in ("C", "D")),
         "dims": dims,
         "warnings": warnings,
         "bootstrap": {"B": B if len(sids) >= 8 else 0, "sessions": len(sids), "seed": seed},
     }
+    if out["forced"]:
+        out["warnings"].insert(
+            0, "样本不足（grade %s：%s 条 / %s 天），以下分数仅供流程演示，不构成结论"
+            % (grade, meta.get("messages"), meta.get("span_days")))
     write_out(out_dir, out)
     return out
 
@@ -289,8 +299,10 @@ def main():
     ap.add_argument("--assets", default=DEFAULT_ASSETS, help="weights/anchors 所在目录")
     ap.add_argument("--bootstrap", type=int, default=1000, help="bootstrap 次数，默认 1000")
     ap.add_argument("--seed", type=int, default=42, help="bootstrap 随机种子，默认 42")
+    ap.add_argument("--force", action="store_true",
+                    help="样本不足时也出分（报告会标注“仅供演示”，不得当结论）")
     args = ap.parse_args()
-    run(args.in_dir, args.out_dir, args.assets, max(0, args.bootstrap), args.seed)
+    run(args.in_dir, args.out_dir, args.assets, max(0, args.bootstrap), args.seed, args.force)
 
 
 if __name__ == "__main__":

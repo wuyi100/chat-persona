@@ -24,7 +24,7 @@ BANNED = [
     "性格类型", "MBTI", "INFP", "INFJ", "ENFP", "INTJ", "ENTP", "ISFJ",
     "心理测试", "科学证明", "超过",
 ]
-STABILITY = {"high": "高", "medium": "中", "low": "低（不稳定）"}
+STABILITY = {"high": "高", "medium": "中", "low": "低（不稳定）", "unknown": "—（会话太少）"}
 FORMAT_LABEL = {
     "wechat": "微信复制文本", "qq": "QQ 导出文本", "whatsapp": "WhatsApp 导出",
     "telegram": "Telegram JSON", "tsv": "表格（TSV/CSV）", "colon": "冒号行文本",
@@ -34,6 +34,7 @@ FORMAT_LABEL = {
     "cn3": "中文日期三行式", "json": "JSON 导出",
     "sender_cn_date": "微信 4.x 多选复制（昵称+中文日期）",
     "cn_date_3line": "中文日期三行式", "mixed": "多文件混合格式",
+    "qq_doc": "QQ 消息管理器导出的 Word（.doc）",
 }
 
 
@@ -153,8 +154,11 @@ def contrast_block(contrast, evidence, dims):
     lo = by_id.get(contrast["ids"][1])
     if not hi or not lo:
         return None
-    return ("**%s偏高，%s偏低。** %s；%s。两段记录指向不同方向，说明这份样本里的说话方式并不单一。"
-            % (contrast.get("high_label"), contrast.get("low_label"),
+    hi_band = contrast.get("high_band") or "高"
+    lo_band = contrast.get("low_band") or "低"
+    return ("**%s%s，%s%s。** %s；%s。两段记录指向不同方向，说明这份样本里的说话方式并不单一。"
+            % (contrast.get("high_label"), hi_band,
+               contrast.get("low_label"), lo_band,
                hi.get("stat"), lo.get("stat")) + "（%s、%s）" % (hi["id"], lo["id"]))
 
 
@@ -172,8 +176,23 @@ def render(in_dir, out_dir):
     conf = {"A": "高", "B": "中", "C": "低"}.get(grade, "低")
     has_ts = bool(parse.get("has_timestamps"))
     fmt = FORMAT_LABEL.get(parse.get("format"), parse.get("format") or "未知")
+    dropped = anon.get("dropped", 0) or 0
+    kept_sensitive = anon.get("sensitive_messages", 0) or 0
+    if dropped:
+        sens_note = "已剔除敏感消息 %d 条" % dropped
+    elif kept_sensitive:
+        sens_note = "标记敏感消息 %d 条（留在本地，报告不引用）" % kept_sensitive
+    else:
+        sens_note = "未发现敏感消息"
 
     parts = ["# 聊天风格画像", ""]
+    if score.get("forced"):
+        parts += [
+            "> **样本不足，仅供流程演示。** 本次 %s 条 / %s 天，未达到可出结论的门槛；"
+            "以下分数不要当作对你的判断，也不要用它给任何人贴标签。"
+            % (parse.get("messages", 0), parse.get("span_days", 0)),
+            "",
+        ]
     parts += [
         "## 1. 数据范围",
         "- 消息 %d 条（文本 %d / 媒体 %d / 系统 %d），会话 %d 段，覆盖 %d 天，对象 %d 位"
@@ -181,7 +200,7 @@ def render(in_dir, out_dir):
            parse.get("media_messages", 0), parse.get("system_messages", 0),
            parse.get("sessions", 0), parse.get("span_days", 0), meta.get("partners", 1)),
         "- 来源：%s；本地解析，原文未离开本机工作目录" % fmt,
-        "- 已剔除敏感消息 %d 条；样本等级 %s（%s置信）" % (anon.get("dropped", 0), grade, conf),
+        "- %s；样本等级 %s（%s置信）" % (sens_note, grade, conf),
         "",
         "## 2. 事实速览",
         facts_block(meta, l1, feats, has_ts),

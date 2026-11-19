@@ -170,6 +170,22 @@ def test_grade_d_refuses():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_grade_d_force_marks_demo():
+    """--force：D 级也出分，但必须带 forced 标记与“仅供演示”警告。"""
+    d = tempfile.mkdtemp(prefix="cp_score_")
+    try:
+        make_features(d, grade="D")
+        code, so, se = run(d, "--force", "--bootstrap", "0")
+        assert code == 0, se
+        data = load(d)
+        assert data["forced"] is True
+        assert data["confidence"] == "低"
+        assert data["dims"], "force 后应出分"
+        assert "仅供流程演示" in data["warnings"][0], data["warnings"]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_rebuild_respects_scale():
     """密度类 value 是 ×100 后的口径，rebuild 必须按 scale 还原，否则 bootstrap 与主分不一致。"""
     import importlib.util

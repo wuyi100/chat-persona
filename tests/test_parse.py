@@ -166,6 +166,55 @@ def test_missing_file():
                        tempfile.mkdtemp(prefix="cp_parse_"))
     assert code == 2, code
 
+def test_qq_doc_single_line():
+    """QQ 消息管理器导出的 .doc：全部内容挤在一行，`昵称: 月-日 时:分:秒 正文`。"""
+    d, rep, msgs = parse("qq_doc.txt", "--me", "无衣", "--year", "2026")
+    try:
+        assert rep["format"] == "qq_doc", rep["format"]
+        assert rep["messages"] == 6, rep["messages"]
+        assert rep["media_messages"] == 1, rep["media_messages"]
+        assert rep["senders"][0]["label"] == "无衣" and rep["senders"][0]["count"] == 5, rep["senders"]
+        assert msgs[0]["ts"] == "2026-11-17T00:24:29+08:00", msgs[0]["ts"]
+        assert msgs[2]["text"] == "你也来", msgs[2]["text"]
+        assert rep["unparsed_lines"] == 0, rep["unparsed_samples"]
+    finally:
+        cleanup(d)
+
+
+def _make_docx(path, paragraphs):
+    import zipfile
+    body = "".join(
+        "<w:p><w:r><w:t xml:space=\"preserve\">%s</w:t></w:r></w:p>" % p
+        for p in paragraphs)
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+           '<w:body>%s</w:body></w:document>' % body)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", xml)
+
+
+def test_docx_direct_input():
+    """.docx 直接作为 --in：走 doc2txt 的 zip 解析，再按聊天格式识别。"""
+    tmp = tempfile.mkdtemp(prefix="cp_docx_")
+    try:
+        docx = os.path.join(tmp, "chat.docx")
+        _make_docx(docx, [
+            "阿醒", "2024年1月1日 20:00", "在吗",
+            "无衣", "2024年1月1日 20:01", "在的",
+        ])
+        out = os.path.join(tmp, "out")
+        code, so, se = run("--in", docx, "--out", out, "--me", "阿醒")
+        assert code == 0, "exit %d\n%s\n%s" % (code, so, se)
+        with open(os.path.join(out, "parse_report.json"), encoding="utf-8") as f:
+            rep = json.load(f)
+        assert rep["format"] == "sender_cn_date", rep["format"]
+        assert rep["messages"] == 2, rep["messages"]
+        labels = {s["label"]: s["count"] for s in rep["senders"]}
+        assert labels == {"阿醒": 1, "无衣": 1}, rep["senders"]
+    finally:
+        cleanup(tmp)
+
+
 def test_merge_dir_dedupes():
     """--in 传目录时合并多个文件，并按（时间, 发送者, 正文）去重。"""
     a = tempfile.mkdtemp(prefix="cp_merge_a_")

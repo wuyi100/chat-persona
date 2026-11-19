@@ -285,7 +285,9 @@ def run(in_dir, out_dir):
         lo = min(lows, key=lambda k: dims[k]["score"])
         contrast = {
             "high": hi, "high_label": dims[hi].get("label"),
+            "high_band": dims[hi].get("band"),
             "low": lo, "low_label": dims[lo].get("label"),
+            "low_band": dims[lo].get("band"),
             "ids": [by_dim[hi][0], by_dim[lo][0]],
         }
 
